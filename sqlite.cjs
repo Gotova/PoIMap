@@ -63,20 +63,6 @@ app.get('/api/markertypes', (req, res) => {
   });
 });
 
-app.get('/api/markertypes/:id', (req, res) => {
-  const id = req.params.id;
-
-  db.get('SELECT * FROM MarkerType WHERE id = ?', [id], (err, row) => {
-    if (err) {
-      return res.status(500).send('Fehler beim Abrufen des MarkerType-Eintrags');
-    }
-    if (!row) {
-      return res.status(404).send('MarkerType nicht gefunden');
-    }
-    res.json(row);
-  });
-});
-
 app.post('/api/questlines', (req, res) => {
   const { Name, Description, MainQuest } = req.body;
   db.run(
@@ -115,14 +101,62 @@ app.post('/api/markers', (req, res) => {
 });
 
 app.get('/api/markers', (req, res) => {
-  db.all('SELECT * FROM Marker', [], (err, rows) => {
+  const query = `
+    SELECT 
+      Marker.id, 
+      Marker.Name, 
+      Marker.xCoord, 
+      Marker.yCoord, 
+      Marker.Description, 
+      Marker.Hidden, 
+      Marker.CreationDate, 
+      Marker.UpdateDate,
+      MarkerType.id as TypeID,
+      MarkerType.Name as TypeName,
+      MarkerType.Color,
+      MarkerType.Icon,
+      QuestLine.id as QuestID,
+      QuestLine.Name as QuestName,
+      QuestLine.Description as QuestDescription,
+      QuestLine.MainQuest
+    FROM Marker
+    LEFT JOIN MarkerType ON Marker.TypeID = MarkerType.id
+    LEFT JOIN QuestLine ON Marker.QuestID = QuestLine.id
+  `;
+
+  db.all(query, [], (err, rows) => {
     if (err) {
-      return res.status(500).send('Fehler beim Abrufen der Markers');
+      return res.status(500).send('Fehler beim Abrufen der Marker');
     }
-    res.json(rows);
-    
+
+    // Umstrukturierung der Daten in das gewünschte JSON-Format
+    const result = rows.map(row => ({
+      id: row.id,
+      Name: row.Name,
+      xCoord: row.xCoord,
+      yCoord: row.yCoord,
+      Description: row.Description,
+      Hidden: row.Hidden,
+      CreationDate: row.CreationDate,
+      UpdateDate: row.UpdateDate,
+      TypeID: row.TypeID,
+      Type: {
+        TypeName: row.TypeName,
+        Color: row.Color,
+        Icon: row.Icon
+      },
+      QuestID: row.QuestID,
+      Quest: {
+        QuestName: row.QuestName,
+        QuestDescription: row.QuestDescription,
+        MainQuest: row.MainQuest
+      }
+    }));
+
+    res.json(result);
   });
 });
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

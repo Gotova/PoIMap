@@ -1,5 +1,14 @@
 <template>
     <main>
+        <div class="commandline">
+            <marker-type-button></marker-type-button>
+            <quest-line-button></quest-line-button>
+            <marker-button></marker-button>
+        </div>
+        <div class="questbox-button" v-on:click="isQuestboxVisible=!isQuestboxVisible">Hide Questboard</div>
+        <div v-if="isQuestboxVisible" class="questbox">
+
+        </div>
         <div v-if="isMarkerModalOpen" class="marker-modal-overlay" @click.self="closeMarkerModal">
             <div class="marker-modal-content">
                 <h2>Neuen Marker hinzufügen</h2>
@@ -72,6 +81,8 @@
                 id="map"
                 ref="map"
                 :zoom="zoom"
+                @update:zoom="logZoom"
+                :controlAttributionProps="false"
                 :center="[3608, 4096]"
                 :maxBounds="imageBounds"
                 :minZoom="minZoom"
@@ -80,7 +91,6 @@
                 @click="mapClick"
                 style="height: 100%; width: 100%;"
                 @contextmenu="openContextMenu"
-                
                 >
                 <!-- @vue-skip -->
                 <l-image-overlay :url="imageUrl" :bounds="imageBounds" />
@@ -93,11 +103,20 @@
                     >
                     <l-popup>{{ marker.description }}</l-popup>
                 </l-marker>
+                <!-- @vue-skip -->
                 <l-marker style="pointer-events: none;"
                     v-for="(mainquest, index) in mainquests"
                     :key="index"
                     :lat-lng="mainquest.position"
                     :icon="mainquest.icon"
+                    >
+                </l-marker>
+                <!-- @vue-skip -->
+                <l-marker style="pointer-events: none;"
+                    v-for="(currentMarker, index) in currentMarkers"
+                    :key="index"
+                    :lat-lng="currentMarker.position"
+                    :icon="currentMarker.icon"
                     >
                 </l-marker>
                 
@@ -119,14 +138,20 @@
 
 <script setup lang="ts">
     import "leaflet/dist/leaflet.css";
+    
+    import MarkerTypeButton from '../components/MarkerTypeButton.vue';
+    import QuestLineButton from '../components/QuestLineButton.vue';
+    import MarkerButton from '../components/MarkerButton.vue';
     import { LMap, LImageOverlay, LMarker, LPopup, LControlAttribution } from "@vue-leaflet/vue-leaflet";
     import { Icon } from "leaflet";
-    import { onBeforeMount, ref, reactive, onMounted, onBeforeUnmount } from "vue";
+    import { ref, reactive, onMounted, onBeforeUnmount } from "vue";
     import L from "leaflet";
     import { bounds } from "leaflet";
     import axios from 'axios';
 
     const zoom = ref(-3);
+    const iconSize = ref(50);
+    const isQuestboxVisible = ref(true)
     const isMarkerModalOpen = ref(false);
     const isMarkerTypeModalOpen = ref(false);
     const isQuestLineModalOpen = ref(false);
@@ -144,6 +169,7 @@
     });
     const markers = ref([]);
     const mainquests = ref([]);
+    const currentMarkers = ref([])
     const markerLocation = ref({'x' : 0, 'y' : 0});
     const newMarker = ref({
         Name: '',
@@ -173,34 +199,36 @@
         [7216, 8192]
     ];
 
-    // map.value.removeControl;
-
-    const old_markers = ref([
-    {
-        position: [3600, 4090],
-        description: "Infomarkierung A",
-        icon: new Icon({
-            iconUrl: new URL("../assets/images/info_marker.png", import.meta.url).href,
-            iconSize: [50, 50],
-            iconAnchor: [0, 0],
-            popupAnchor: [1, -34],
-        }),
-    },
-    {
-        position: [3700.5, 4200],
-        description: "Dangermarkierung A",
-        icon: new Icon({
-            iconUrl: new URL("../assets/images/danger_marker.png", import.meta.url).href,
-            iconSize: [50, 50],
-            iconAnchor: [15, 40],
-            popupAnchor: [1, -34],
-        }),
-    },
-]);
 
 
+const logZoom = (event: number) => {
+    console.log(typeof event);
+    if (event < -2) {
+        iconSize.value = 50;
+    } else if (event < -1) {
+        iconSize.value = 60;
+    } else if (event < 0) {
+        iconSize.value = 80;
+    } else if (event < 1) {
+        iconSize.value = 100;
+    } else if (event < 2) {
+        iconSize.value = 130;
+    } else if (event < 3) {
+        iconSize.value = 160;
+    } else if (event < 4) {
+        iconSize.value = 200;
+    } else if (event < 5) {
+        iconSize.value = 250;
+    }
+    
+    markers.value.length = 0;
+    mainquests.value.length = 0;
+    fetchMarkers();
 
-function openContextMenu(event: L.LeafletMouseEvent) {
+}
+
+
+const openContextMenu = async (event: L.LeafletMouseEvent) => {
     event.originalEvent.preventDefault();
     contextMenu.visible = true;
     // console.log("event latlng" + event.latlng.lat);
@@ -212,21 +240,38 @@ function openContextMenu(event: L.LeafletMouseEvent) {
     markerLocation.value.x = event.latlng.lng;
     markerLocation.value.y = 7216 - event.latlng.lat ;
     contextMenu.latlng = [contextMenu.x, contextMenu.y];
-    fetchMarkerTypesAndQuestLines();
     // console.log(`Contextmenü - x: ${contextMenu.x} | y: ${contextMenu.y}`);
-    console.log(`markerLocation - x: ${markerLocation.value.x} | y: ${markerLocation.value.y}`);
-    
+
+    const markerTypeResponse = await fetch('http://localhost:5000/api/markertypes');
+    markerTypes.value = await markerTypeResponse.json()
+    const questLineResponse = await fetch('http://localhost:5000/api/questlines');
+    questLines.value = await questLineResponse.json()
+
 }
 
-const mapClick = () => {
+const mapClick = async (event: L.LeafletMouseEvent) => {
     contextMenu.visible = false;
+
+    const newCurrentMarker = {
+        position: [event.latlng.lat, event.latlng.lng],
+        description: "New Marker Location\nClick 'Add Marker' to give it context.",
+        icon: new Icon({
+            iconUrl: new URL("../assets/markers/position_marker.gif", import.meta.url).href,
+            iconSize: [iconSize.value, iconSize.value],
+            iconAnchor: [iconSize.value / 2, iconSize.value],
+            popupAnchor: [1, -34],
+        })
+    }
+    
+    
+    currentMarkers.value.length = 0;
+    // @ts-ignore
+    currentMarkers.value.push(newCurrentMarker);
 }
 
 const addMarkerModal = () => {
     contextMenu.visible = false;
-    isMarkerModalOpen.value = true;
-    console.log('x: ' + contextMenu.x + ' | y: ' + contextMenu.y);
-    
+    isMarkerModalOpen.value = true;    
 };
 
 const closeMarkerModal = () => {
@@ -262,73 +307,67 @@ const addMarker = async () => {
 };
 
 const fetchMarkers = async () => {
-    try {
-    const markerResponse = await fetch('http://localhost:5000/api/markers');
-    const markerJson = await markerResponse.json()
-    const markerTypeResponse = await fetch('http://localhost:5000/api/markertypes');
-    const markerTypeJson = await markerTypeResponse.json()
-    const questLineResponse = await fetch('http://localhost:5000/api/questlines');
-    const questLineJson = await questLineResponse.json()
-    // console.log(markerTypeJson);
-    // console.log(questLineJson);
-    // fetchMarkerTypesAndQuestLines();
-
-    markerJson.forEach(function(obj: {
-        "id": number,
-        "Name": string,
-        "TypeID": number,
-        "QuestID": number,
-        "xCoord": number,
-        "yCoord": number,
-        "Description": string,
-        "Hidden": boolean
-    }) {
-        
-        const newMarkerObject = {
-            position: [7216 - obj.yCoord, obj.xCoord],
-            description: obj.Description,
-            icon: new Icon({
-                iconUrl: new URL("../assets/images/danger_marker.png", import.meta.url).href,
-                iconSize: [50, 50],
-                iconAnchor: [25, 50],
-                popupAnchor: [1, -34],
-            })
-        }
-        markers.value.push(newMarkerObject);
-
-        if (questLineJson[obj.QuestID - 1].MainQuest == true) {
-            console.log(questLineJson[obj.QuestID - 1]);
-
-            const newMainquestObject = {
-            position: [7216 - obj.yCoord, obj.xCoord],
-            description: obj.Description,
-            icon: new Icon({
-                iconUrl: new URL("../assets/images/crown.png", import.meta.url).href,
-                iconSize: [30, 30],
-                iconAnchor: [15, 72]
-            })
-        }
-            mainquests.value.push(newMainquestObject);
-        }
-        
-        
-    });
     
-  } catch (error) {
-    console.error('Fehler beim Abrufen der Marker:', error);
-  }
-}
+    try {
+        const markerResponse = await fetch('http://localhost:5000/api/markers');
+        const markerJson = await markerResponse.json();
 
-const fetchMarkerTypesAndQuestLines = async () => {
-  try {
-    const markerTypeResponse = await fetch('http://localhost:5000/api/markertypes');
-    const questLineResponse = await fetch('http://localhost:5000/api/questlines');
-    markerTypes.value = await markerTypeResponse.json();
-    questLines.value = await questLineResponse.json();
-  } catch (error) {
-    console.error('Fehler beim Abrufen der Markertypen und Questlines:', error);
-  }
-};
+        markerJson.forEach(function(obj: {
+            "id": number,
+            "Name": string,
+            "xCoord": number,
+            "yCoord": number,
+            "Description": string,
+            "Hidden": number,
+            "CreationDate": string,
+            "UpdateDate": string,
+            "TypeID": number,
+            "Type": {
+            "TypeName": string,
+            "Color": string,
+            "Icon": string
+            },
+            "QuestID": number,
+            "Quest": {
+            "QuestName": string,
+            "QuestDescription": string,
+            "MainQuest": boolean
+            }
+            }) {
+            const newMarkerObject = {
+                position: [7216 - obj.yCoord, obj.xCoord],
+                description: obj.Description,
+                icon: new Icon({
+                    iconUrl: new URL(obj.Type.Icon, import.meta.url).href,
+                    iconSize: [iconSize.value, iconSize.value],
+                    iconAnchor: [iconSize.value / 2, iconSize.value],
+                    popupAnchor: [1, -34],
+                })
+            }
+            // console.log(newMarkerObject);
+            
+            // @ts-ignore
+            markers.value.push(newMarkerObject);
+
+            if (obj.Quest.MainQuest == true) {
+
+                const newMainquestObject = {
+                    position: [7216 - obj.yCoord, obj.xCoord],
+                    description: obj.Description,
+                    icon: new Icon({
+                        iconUrl: new URL("../assets/images/crown.png", import.meta.url).href,
+                        iconSize: [iconSize.value, iconSize.value],
+                        iconAnchor: [iconSize.value * 0.5, iconSize.value * 1.8]
+                    })
+                }
+                // @ts-ignore
+                mainquests.value.push(newMainquestObject);
+            }
+        })
+    } catch (error) {
+        console.error('Fehler beim Abrufen der Marker:', error);
+    }
+}
 
 const addMarkerType = async () => {
   try {
@@ -365,8 +404,8 @@ const addQuestLine = async () => {
   
   try {
     const response = await axios.post('http://localhost:5000/api/questlines', newQuestLine.value);
-    //// @ts-ignore
-    QuestLines.value.push(response.data);
+    // @ts-ignore
+    questLines.value.push(response.data);
     
     newQuestLine.value = { Name: '', Description: '', MainQuest: false };
   } catch (error) {
@@ -384,8 +423,9 @@ const addQuestLine = async () => {
 
 
 onMounted(() => {
-    fetchMarkerTypesAndQuestLines();
-    intervalId = setInterval(fetchMarkers, 1000);
+    intervalId = setInterval(fetchMarkers, 10000);
+    fetchMarkers();
+    
 });
 
 onBeforeUnmount(() => {
@@ -409,6 +449,64 @@ onBeforeUnmount(() => {
         height: 100vh;
         width: 100vw;
         position: relative;
+    }
+
+    .commandline{
+        position: absolute; 
+        width: calc(100% - 8rem); 
+        height: 3rem; 
+        z-index: 3;
+        top: 0.6rem;
+        margin-left: 4rem;
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 1rem;
+    }
+
+    .commandline * {
+        width: 10rem;
+        height: 100%;
+        border-radius: 0.5rem;
+        cursor: pointer;
+    }
+
+    .questbox-button{
+        width: 8rem;
+        height: 2rem;
+        position: absolute;
+        background-color: #6d2424;
+        background-image: url("../assets/backgrounds/wood-pattern-horizontal.png");
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'MedievalSharp', Arial !important;
+        color: #e5e9ee;
+        border: 1px solid black;
+        font-size: 0.9rem;
+        left: 0.5rem;
+        top: 5rem;
+        z-index: 3;
+        border-radius: 0.5rem;
+        cursor: pointer;
+    }
+
+    .questbox{
+        width: 15rem;
+        height: 30rem;
+        position: absolute;
+        background-color: #6d2424;
+        background-image: url("../assets/backgrounds/wood-pattern-vertical.png");
+        border: 1px solid black;
+        left: 0.5rem;
+        top: 7.5rem;
+        z-index: 3;
+        border-radius: 0.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        transition: all 1s ease-in-out;
     }
 
     .leaflet-container {
